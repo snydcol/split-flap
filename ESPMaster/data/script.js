@@ -220,6 +220,9 @@ function setSavedMode(mode) {
 		case "countdown":
 			document.getElementById("modeCountdown").checked = true;
 			break;
+		case "bitcoin":
+			document.getElementById("modeBitcoin").checked = true;
+			break;
 	}
 
 	setDeviceModeTab(mode);

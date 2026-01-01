@@ -177,7 +177,7 @@ const char* DEVICE_MODE_TEXT = "text";
 const char* DEVICE_MODE_CLOCK = "clock";
 const char* DEVICE_MODE_DATE = "date";
 const char* DEVICE_MODE_COUNTDOWN = "countdown";
-
+const char* DEVICE_MODE_BITCOIN = "bitcoin";
 //Alignment options
 const char* ALIGNMENT_MODE_LEFT = "left";
 const char* ALIGNMENT_MODE_CENTER = "center";
@@ -218,6 +218,53 @@ bool isPendingWifiReset = false;
 #if OTA_ENABLE == true
 bool isInOtaMode = false;
 #endif
+
+//THIS IS BITCOIN DISPLAY CODE
+
+
+//Assumes wifi is set up -- checks exist in this code somewhere
+
+
+const char* BITCOIN_API_URL = "https://mempool.space/api/v1/prices";
+void getCurrentBtcPrice() {
+  // Your code to update the display from the web goes here
+  HTTPClient httpClient;  // Create an HTTP client object
+
+  httpClient.begin(BITCOIN_API_URL);
+
+  int httpResponseCode = httpClient.GET();  // Send the GET request
+
+  if (httpResponseCode == 200) {  // Check if the request was successful
+    String payload = httpClient.getString();  // Get the response payload
+    SerialPrintln("Received payload: " + payload);
+
+    // Parse the JSON response
+    DynamicJsonDocument jsonDoc(2048);
+    DeserializationError error = deserializeJson(jsonDoc, payload);
+
+    if (!error) {
+      // Extract the Bitcoin price in USD
+      const char* bitcoinPrice = jsonDoc["USD"].as<const char*>();
+      SerialPrintln("Bitcoin Price (USD): " + String(bitcoinPrice));
+
+      // Update the display with the Bitcoin price
+      showText("BTC: $" + String(bitcoinPrice));
+    } else {
+      SerialPrintln("JSON deserialization error: " + String(error.c_str()));
+    }
+  } else {
+    SerialPrintln("HTTP GET request failed with code: " + String(httpResponseCode));
+  }
+
+  httpClient.end();  // Close the HTTP connection
+
+  // delay(300000);  // Delay for 5 minutes before the next update
+
+}
+
+
+
+
 
 /* .-----------------------------------------------. */
 /* | ___          _          ___     _             | */
@@ -392,7 +439,8 @@ void setup() {
           //HTTP POST device mode value
           if (p->name() == PARAM_DEVICEMODE) {
             String receivedValue = p->value();
-            if (receivedValue == DEVICE_MODE_TEXT || receivedValue == DEVICE_MODE_CLOCK || receivedValue == DEVICE_MODE_DATE || receivedValue == DEVICE_MODE_COUNTDOWN) {
+            if (receivedValue == DEVICE_MODE_TEXT || receivedValue == DEVICE_MODE_CLOCK || receivedValue == DEVICE_MODE_DATE 
+              || receivedValue == DEVICE_MODE_COUNTDOWN || receivedValue == DEVICE_MODE_BITCOIN) {
               newDeviceModeValue = receivedValue;          
             }
             else {
@@ -506,6 +554,10 @@ void setup() {
           //Only if we are showing text
           if (deviceMode == DEVICE_MODE_TEXT) {
             inputText = newInputTextValue;
+          }
+
+          if (deviceMode == DEVICE_MODE_BITCOIN) {
+            getCurrentBtcPrice();
           }
         }
 
