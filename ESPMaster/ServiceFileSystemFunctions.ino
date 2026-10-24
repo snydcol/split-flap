@@ -1,4 +1,14 @@
-//Initialize LittleFS
+/**
+ * LittleFS persistence service.
+ *
+ * Display settings and scheduled messages are stored as small text files so
+ * they survive reboots. The helpers in this file keep file access and default
+ * value handling in one place.
+ */
+
+/**
+ * Mounts the LittleFS volume used for persistent settings.
+ */
 void initialiseFileSystem() {
   if (!LittleFS.begin()) {
     SerialPrintln("An error has occurred while mounting LittleFS");
@@ -7,7 +17,12 @@ void initialiseFileSystem() {
   SerialPrintln("LittleFS mounted successfully");
 }
 
-//Load variables that are saved to the file system
+/**
+ * Loads persisted settings and scheduled messages into runtime state.
+ *
+ * Missing setting files are created with their documented defaults by
+ * readFile().
+ */
 void loadValuesFromFileSystem() {
   //Load values saved in LittleFS
   countdownToDateUnix = readFile(LittleFS, countdownPath, "0");
@@ -30,7 +45,10 @@ void loadValuesFromFileSystem() {
   SerialPrintln(scheduledMessages.size());
 }
 
-//Read File from LittleFS
+/**
+ * Reads the first line of a file, returning and persisting defaultValue when
+ * the file is unavailable and a default was supplied.
+ */
 String readFile(fs::FS &fs, const char * path, String defaultValue) {
   SerialPrintf("Reading file: %s\r\n", path);
 
@@ -56,7 +74,9 @@ String readFile(fs::FS &fs, const char * path, String defaultValue) {
   return fileContent;
 }
 
-//Write file to LittleFS
+/**
+ * Overwrites path with message.
+ */
 void writeFile(fs::FS &fs, const char * path, const char * message) {
   SerialPrintf("Writing file: %s\r\n", path);
 

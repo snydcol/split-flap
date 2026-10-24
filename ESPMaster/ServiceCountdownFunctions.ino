@@ -1,6 +1,15 @@
-//Check if countdown is required and check how long left
+/**
+ * Countdown-mode service.
+ *
+ * The configured Unix timestamp is converted into whole hours and then into a
+ * whole number of days. Partial 24-hour periods round up, and expired
+ * countdowns stop at zero.
+ */
+
+/**
+ * Recalculates the countdown text when countdown mode is active.
+ */
 void checkCountdown() {
-  //This will check if a day has passed since the last time the countdown was updated
   if (deviceMode == DEVICE_MODE_COUNTDOWN) {
     long countdownInSeconds = atol(countdownToDateUnix.c_str());
 

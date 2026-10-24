@@ -1,4 +1,19 @@
-//Initialize WiFi
+/**
+ * Wi-Fi connection and provisioning service.
+ *
+ * In setup/AP mode, WiFiManager provides a temporary portal for selecting a
+ * network and saving credentials. In direct mode, the credentials compiled
+ * into ESPMaster.ino are used instead. A successful connection sets
+ * isWifiConfigured, which controls whether the web server and display services
+ * are started.
+ */
+
+/**
+ * Initializes Wi-Fi using either WiFiManager provisioning or direct credentials.
+ *
+ * When WiFiManager saves new credentials, the callback schedules a reboot
+ * because the web server cannot safely be started in the same boot cycle.
+ */
 void initWiFi() {
   int wifiConnectTimeoutSeconds = 180;
 
@@ -21,13 +36,12 @@ void initWiFi() {
   wifiManager.setConnectTimeout(120);    
   wifiManager.setWiFiAutoReconnect(true);
   wifiManager.setSaveConfigCallback([]() {
-    //Sadly, if we've had to open up the WiFi manager portal to set the WiFi configuration up
-    //then a soft reset is necessary. There looks to be issues with the ESP and running
-    //a webserver alongside the WiFiManager. Some reading around this issue here suggests it is
-    //not possible to fix:
+    //If the portal was needed to configure Wi-Fi, reboot before starting the
+    //web server. WiFiManager and the web server do not reliably share a boot
+    //cycle on this ESP8266 setup:
     //https://github.com/tzapu/WiFiManager/issues/1579
     
-    //Suggestion to fix is reset the device:
+    //The documented workaround is to reset the device:
     //https://github.com/rancilio-pid/clevercoffee/issues/323#issuecomment-1587344185
 
     SerialPrintln("New WiFi configuration saved. Will need to reboot device to let webserver work...");

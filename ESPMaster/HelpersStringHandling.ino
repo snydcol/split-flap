@@ -1,12 +1,22 @@
-//Aligns string on center of array and fills empty chars with spaces
+/**
+ * Text formatting helpers used before messages are sent to the flap units.
+ *
+ * The physical display has exactly UNITS_AMOUNT positions. These helpers
+ * pad messages with spaces so callers can apply the selected alignment before
+ * the characters are translated to flap positions.
+ */
+
+/**
+ * Centers a message across the available display positions and pads it.
+ */
 String centerString(String message) {
-  //Takes care of the left side
+  //Add the left-hand padding first so the remaining space can be added right.
   int leftSpaceAmount = (UNITS_AMOUNT -  message.length()) / 2;
   for (int spaceIndex = 0; spaceIndex < leftSpaceAmount; spaceIndex++) {
     message = " " + message;
   }
 
-  //Take care of the right side
+  //Pad the right-hand side until the message fills the display.
   for(int spaceIndex = message.length(); spaceIndex < UNITS_AMOUNT; spaceIndex++) {
     message = message + " ";
   }
@@ -16,6 +26,9 @@ String centerString(String message) {
   return message;
 }
 
+/**
+ * Creates a display-width string containing the same character in every slot.
+ */
 String createRepeatingString(char character) {
   String newMessage = "";
   for (int unitIndex = 0; unitIndex < UNITS_AMOUNT; unitIndex++) {
@@ -25,7 +38,9 @@ String createRepeatingString(char character) {
   return newMessage;  
 }
 
-//Aligns string on right side of array and fills empty chars with spaces
+/**
+ * Right-aligns a message and pads the unused positions with spaces.
+ */
 String rightString(String message) {
   int rightSpaceAmount = (UNITS_AMOUNT - message.length());
   for (int spaceIndex = 0; spaceIndex < rightSpaceAmount; spaceIndex++) {
@@ -37,7 +52,9 @@ String rightString(String message) {
   return message;
 }
 
-//Aligns string on left side of array and fills empty chars with spaces
+/**
+ * Left-aligns a message and pads the unused positions with spaces.
+ */
 String leftString(String message) {
   int leftSpaceAmount = (UNITS_AMOUNT - message.length());
   for (int spaceIndex = 0; spaceIndex < leftSpaceAmount; spaceIndex++) {
@@ -49,13 +66,18 @@ String leftString(String message) {
   return message;
 }
 
-//Converts input string to uppercase
+/**
+ * Normalizes a message to uppercase for the configured flap alphabet.
+ */
 String cleanString(String message) {
   message.toUpperCase();
   
   return message;
 }
 
+/**
+ * Converts the UI's 1-100 speed value to the unit's configured speed range.
+ */
 int convertSpeed(String flapSpeed) {
   int flapSpeedInt;
   flapSpeedInt = flapSpeed.toInt();
@@ -64,47 +86,53 @@ int convertSpeed(String flapSpeed) {
   return flapSpeedInt;
 }
 
+/**
+ * Normalizes a sentence and wraps it into display-width lines.
+ *
+ * Explicit "\\n" sequences become line breaks. Words are kept together where
+ * possible, long words are split at the display width, and a hyphen is added
+ * when a word must continue on the next line.
+ */
 LList<String> processSentenceToLines(String sentence) {    
   SerialPrintln("Processing Sentence to lines");
   
-  //Remove trailing and preceding whitespace
+  //Remove whitespace around the complete sentence.
   sentence.trim();
   
-  //Handle newline characters being passed up
+  //The web form sends a literal "\n" sequence for a requested line break.
   sentence.replace("\\n", "\n");
 
-  //No sentence to start with a newline
+  //Do not create an empty first line.
   if (sentence.startsWith("\n")) {
     sentence = sentence.substring(1);
   }
 
-  //Replace any double newlines with a single one, not allowing anymore then one
+  //Collapse repeated line breaks to one line break.
   while(sentence.indexOf("\n\n") != -1) 
   {
     sentence.replace("\n\n", "\n");
   }
 
-  //Remove pre-ceding space to a newline
+  //Remove spaces immediately before a line break.
   while(sentence.indexOf(" \n") != -1) 
   {
     sentence.replace(" \n", "\n");
   }
 
-  //Replace all double spaces
+  //Avoid creating extra display columns from repeated spaces.
   while(sentence.indexOf("  ") != -1) 
   {
     sentence.replace("  ", " ");
   }
     
-  // Split the string into substrings based on spaces
+  //Split the sentence into words while retaining embedded line breaks.
   LList<String> words; 
   while (sentence.length() > 0)
   {
-    //Find the next space
+    //Find the next word boundary.
     int indexOfSpace = sentence.indexOf(' ');
 
-    //If not space, take the rest of the string that is left
-    //Else, process the part of the string
+    //If there is no remaining space, the rest is the final word.
     if (indexOfSpace == -1)
     {
       words.add(sentence);
@@ -117,38 +145,38 @@ LList<String> processSentenceToLines(String sentence) {
     }
   }
 
-  //Now process the words into lines where possible
+  //Build display-width lines from the normalized words.
   LList<String> lines;
   String inProgressLine;
   while(words.size() != 0) 
   {
-    //Always get the first word
+    //Always process the first word; it is removed after processing below.
     String wordItem = words[0];
 
-    //Only measure the word up until the first newline
+    //A newline terminates the current line, so only measure the first segment.
     int indexOfFirstNewline = wordItem.indexOf('\n');
 
-    //If the first characeter is not a newline see if we can fit it on the current line, otherwise don't bother
+    //A word beginning with a newline should start a new line immediately.
     if (indexOfFirstNewline != 0) 
     {
-      //Determine the word length up till the first newline as to see if it will fit on the current line
+      //Check whether the next word segment fits on the current line.
       int wordLength = indexOfFirstNewline == -1 ? wordItem.length() : indexOfFirstNewline;
 
-      //If we cannot fit everything on the same line, start a new line
+      //Flush the current line before adding a word that would exceed it.
       if (inProgressLine != "" && inProgressLine.length() + wordLength + 1 > UNITS_AMOUNT)
       {
           lines.add(inProgressLine);
           inProgressLine = "";
       }
 
-      //Only if we have a line that has letters in it, do we want a space on the end to split up the words
+      //Insert the separator only between words already on this line.
       if (inProgressLine.length() > 0)
       {
         inProgressLine = inProgressLine + " ";
       }
     }
 
-    //Process the current word
+    //Copy the word into the current line, honoring explicit line breaks.
     int currentWordLength = wordItem.length();
     for(int letterIndex = 0; letterIndex < currentWordLength; letterIndex++)
     {
@@ -161,7 +189,7 @@ LList<String> processSentenceToLines(String sentence) {
       }
       else
       {
-        //If we need to break up the word as its too long, then we need to add a "-"
+        //Split an overlong word and mark the continuation with a hyphen.
         if (inProgressLine.length() == UNITS_AMOUNT - 1 && letterIndex < currentWordLength - 1)
         {
           inProgressLine = inProgressLine + "-";
@@ -169,7 +197,7 @@ LList<String> processSentenceToLines(String sentence) {
           inProgressLine = "";
         }
 
-        //Business as usual, add the letter onto the in progress line
+        //Add the character and flush a full display-width line.
         inProgressLine = inProgressLine + wordItemLetter;
         if (inProgressLine.length() == UNITS_AMOUNT)
         {  
@@ -179,10 +207,10 @@ LList<String> processSentenceToLines(String sentence) {
       }
     }
     
-    //Remove now we've processed that word
+    //Remove the word now that every character has been handled.
     words.remove(0);
     
-    //Don't forgot the last processed item...
+    //Do not lose a final partial line.
     if (words.size() == 0 && inProgressLine != "")
     {
       lines.add(inProgressLine);
@@ -193,7 +221,9 @@ LList<String> processSentenceToLines(String sentence) {
   return lines;
 }
 
-//Used for ensuring a string is a number
+/**
+ * Checks whether strtol can consume the complete string as a base-10 value.
+ */
 bool isNumber(String str) {
   char* endPtr;
 

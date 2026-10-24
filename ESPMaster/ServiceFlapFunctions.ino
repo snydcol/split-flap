@@ -1,8 +1,25 @@
-//Shows a new message on the display
+/**
+ * Flap display service.
+ *
+ * These functions translate display-width text into the configured flap
+ * alphabet and send each unit's target position and speed over I2C. The
+ * master waits for all units to stop before issuing another display update.
+ */
+
+/**
+ * Shows a message without an additional pause after the update.
+ */
 void showText(String message) {  
   showText(message, 0);
 }
 
+/**
+ * Shows a new message and, when requested, pauses for delayMillis afterwards.
+ *
+ * Repeated messages are skipped unless the alignment setting changed. Messages
+ * that wrap into multiple lines are displayed sequentially with a short pause
+ * between lines.
+ */
 void showText(String message, int delayMillis) {  
   if (lastWrittenText != message || alignmentUpdated) { 
     String messageDisplay = message == "" ? "<Blank>" : message;
@@ -44,19 +61,24 @@ void showText(String message, int delayMillis) {
       delay(delayMillis);
     }
 
-    //Save what we last did
+    //Remember the last requested text so unchanged updates can be skipped.
     lastWrittenText = message;
 
-    //Alignment definitely has not changed now
+    //The new message has now been rendered using the current alignment.
     alignmentUpdated = false;
     
     SerialPrintln("Done showing message");
   }
 }
 
-//Pushes message to units
+/**
+ * Aligns and sends one display-width message to every configured unit.
+ *
+ * When UNIT_CALLS_DISABLE is enabled, the I2C calls are replaced with a
+ * delay so the rest of the ESP logic can be tested without connected units.
+ */
 void showMessage(String message, int flapSpeed) {
-  //Format string per alignment choice
+  //Pad the message according to the current UI setting.
   if (alignment == ALIGNMENT_MODE_LEFT) {
     message = leftString(message);
   } 
@@ -107,7 +129,10 @@ void showMessage(String message, int flapSpeed) {
 #endif
 }
 
-//Translates char to letter position
+/**
+ * Returns the flap index for a character, or -1 when the alphabet does not
+ * contain that character.
+ */
 int translateLettertoInt(char letterchar) {
   for (int flapIndex = 0; flapIndex < FLAP_AMOUNT; flapIndex++) {
     if (letterchar == letters[flapIndex]) {
@@ -118,7 +143,12 @@ int translateLettertoInt(char letterchar) {
   return -1;
 }
 
-//Write letter position and speed in rpm to single unit
+/**
+ * Sends a target flap position and speed to one I2C unit.
+ *
+ * Unit addresses are expected to match their configured ascending addresses,
+ * so the caller passes the zero-based display index directly.
+ */
 void writeToUnit(int address, int letter, int flapSpeed) {
   int sendArray[2] = {letter, flapSpeed}; //Array with values to send to unit
 
@@ -134,7 +164,12 @@ void writeToUnit(int address, int letter, int flapSpeed) {
   Wire.endTransmission(); //send values to unit
 }
 
-//Checks if unit in display is currently moving
+/**
+ * Returns true while any unit is moving or cannot be reached.
+ *
+ * Treating an unavailable unit as busy prevents the master from sending a
+ * new message while a unit may still be waking or recovering.
+ */
 bool isDisplayMoving() {
   //Request all units moving state and write to array
   for (int unitIndex = 0; unitIndex < UNITS_AMOUNT; unitIndex++) {
@@ -154,7 +189,12 @@ bool isDisplayMoving() {
   return false;
 }
 
-//Checks if single unit is moving
+/**
+ * Requests one unit's movement state and attempts to wake it if unavailable.
+ *
+ * The unit protocol returns 1 while moving, 0 while idle, and -1 when the
+ * request did not produce a usable response.
+ */
 int checkIfMoving(int address) {
   int active;
   Wire.requestFrom(address, ANSWER_SIZE, 1);

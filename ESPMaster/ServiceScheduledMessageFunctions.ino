@@ -1,10 +1,26 @@
-//Replace/add a scheduled message and persist the result afterwards
+/**
+ * Scheduled-message service.
+ *
+ * Messages are kept in memory while the device is running and serialized to
+ * scheduled-messages.txt whenever a change is persisted. A timestamp is the
+ * message key: adding another message for the same timestamp replaces the
+ * existing one.
+ */
+
+/**
+ * Adds or replaces a scheduled message and immediately persists the list.
+ */
 void addAndPersistScheduledMessage(String scheduledText, long scheduledDateTimeUnix, bool showIndefinitely) {
   addScheduledMessage(scheduledText, scheduledDateTimeUnix, showIndefinitely);
   writeScheduledMessagesToFile();
 }
 
-//Replace/add a scheduled message
+/**
+ * Adds a future message, replacing any existing message at the same timestamp.
+ *
+ * Timestamps in the past are deliberately ignored so stale entries loaded
+ * after a reboot cannot be re-added to the queue.
+ */
 void addScheduledMessage(String scheduledText, long scheduledDateTimeUnix, bool showIndefinitely) {
   SerialPrintln("Processing New Scheduled Message");
   SerialPrintln("-- Message: " + scheduledText);
@@ -34,7 +50,11 @@ void addScheduledMessage(String scheduledText, long scheduledDateTimeUnix, bool 
   }
 }
 
-//Remove and delete a existing scheduled message if found
+/**
+ * Removes and persists the message identified by its scheduled timestamp.
+ *
+ * Returns true when a matching message was found.
+ */
 bool removeScheduledMessage(long scheduledDateTimeUnix) {
   //Find the existing scheduled message and delete it
   for(int scheduledMessageIndex = 0; scheduledMessageIndex < scheduledMessages.size(); scheduledMessageIndex++) {
@@ -53,10 +73,15 @@ bool removeScheduledMessage(long scheduledDateTimeUnix) {
   return false;
 }
 
-//Check if scheduled message is due to be shown
+/**
+ * Displays the first message whose scheduled time has passed.
+ *
+ * Indefinite messages switch the device to text mode and remain on screen.
+ * Temporary messages use scheduledMessageDisplayTimeMillis and then allow the
+ * normal mode loop to resume.
+ */
 void checkScheduledMessages() {   
-  //Iterate over the current bunch of scheduled messages. If we find one where the current time exceeds when we should show
-  //the message, then we need to show that message immediately
+  //Find the first message whose scheduled time has passed and show it now.
   unsigned long currentTimeUnix = timezone.now();
   for(int scheduledMessageIndex = 0; scheduledMessageIndex < scheduledMessages.size(); scheduledMessageIndex++) {
     ScheduledMessage scheduledMessage = scheduledMessages[scheduledMessageIndex];
@@ -82,7 +107,12 @@ void checkScheduledMessages() {
   }
 }
 
-//Parse JSON scheduled messages into the current known scheduled messages
+/**
+ * Parses the persisted JSON array and loads future messages into memory.
+ *
+ * Invalid JSON or a non-array value clears the stored schedule so the device
+ * can recover on the next boot.
+ */
 void readScheduledMessagesFromJson(String scheduledMessagesJson) {
   if (scheduledMessagesJson != "") {    
     int addedScheduledMessageCount = 0;
@@ -119,7 +149,9 @@ void readScheduledMessagesFromJson(String scheduledMessagesJson) {
   }
 }
 
-//Convert the scheduled messages to a JSON document and save to file
+/**
+ * Serializes the in-memory schedule to the LittleFS JSON file.
+ */
 void writeScheduledMessagesToFile() {
   if (scheduledMessages.size()) {
     JsonDocument scheduledMessagesDocument;
@@ -141,7 +173,9 @@ void writeScheduledMessagesToFile() {
   }
 }
 
-//Write an empty array to the schedule messages file, used in case something goes terribly wrong
+/**
+ * Replaces the schedule file with an empty JSON array.
+ */
 void writeEmptyScheduledMessagesToFile() {
   writeFile(LittleFS, scheduledMessagesPath, "[]");
 }

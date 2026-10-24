@@ -6,11 +6,29 @@
 /* #|____/|_|   |_____|___| |_|   |_|   |_____/_/   \_|_|     |_____|____/|_|     |_|  |_/_/   \_|____/ |_| |_____|_| \_\# */
 /* ####################################################################################################################### */
 /*
-  This project project is done for fun as part of: https://github.com/JonnyBooker/split-flap
+  This project is done for fun as part of: https://github.com/JonnyBooker/split-flap
   None of this would be possible without the brilliant work of David Königsmann: https://github.com/Dave19171/split-flap
 
   Licensed under GNU: https://github.com/JonnyBooker/split-flap/blob/master/LICENSE
 */
+
+/**
+ * ESPMaster is the ESP8266 coordinator for the split-flap display.
+ *
+ * It connects the display to Wi-Fi, serves the web UI from LittleFS, keeps
+ * time synchronized, and sends target flap positions to the Arduino units
+ * over I2C. The remaining .ino files contain the focused services used by
+ * this sketch; Arduino combines them into one compilation unit.
+ *
+ * Startup order is important:
+ *   1. Configure the serial or I2C interface.
+ *   2. Connect to Wi-Fi or open the setup portal.
+ *   3. Synchronize the clock and load persisted settings.
+ *   4. Register the web routes and start the server.
+ *
+ * The main loop then handles deferred reboots/resets, OTA work, time events,
+ * scheduled messages, countdown updates, and the active display mode.
+ */
 
 /* .--------------------------------------------------------------------------------. */
 /* |  ___           __ _                    _    _       ___       __ _             | */
@@ -20,20 +38,21 @@
 /* |                    |___/                                                       | */
 /* '--------------------------------------------------------------------------------' */
 /*
-  These define statements can be changed as you desire for changing the functionality and
-  behaviour of your device.
+  These compile-time switches change the functionality and behaviour of the
+  device. Rebuild the sketch after changing any of them.
 */
-#define SERIAL_ENABLE       false   //Option to enable serial debug messages. "true" Will disable I2C communications to allow serial monitoring.
-#define UNIT_CALLS_DISABLE  false   //Option to disable the call to the units so can just debug the ESP with no connections
-#define OTA_ENABLE          true    //Option to enable OTA functionality
-#define UNITS_AMOUNT        10      //Amount of connected units !IMPORTANT TO BE SET CORRECTLY!
-#define SERIAL_BAUDRATE     115200  //Serial debugging BAUD rate
-#define WIFI_USE_DIRECT     false   //Option to either direct connect to a WiFi Network or setup a AP to configure WiFi. Setting to false will setup as a AP.
-#define USE_MULTICAST       false    //Option to broadcast a ".local" URL on your local network default split-flap.local. You can change the name under configurable settings.
+#define SERIAL_ENABLE       false   //Enable serial diagnostics. On an ESP-01 this uses the pins needed for I2C.
+#define UNIT_CALLS_DISABLE  false   //Skip I2C unit calls and simulate display updates while testing the ESP alone.
+#define OTA_ENABLE          true    //Enable Arduino OTA update support.
+#define UNITS_AMOUNT        10      //Number of connected units; must match the physical display.
+#define SERIAL_BAUDRATE     115200  //Baud rate used when serial diagnostics are enabled.
+#define WIFI_USE_DIRECT     false   //Use compiled credentials when true; use the WiFiManager AP portal when false.
+#define USE_MULTICAST       false   //Advertise mdnsName as a ".local" address on the local network.
 
 /*
-  EXPERIMENTAL: Try to use your Router when possible to set a Static IP address for your device to avoid conflicts with other devices
-  on your network. This will try and setup your device with a static IP address of your chosing. See below for more details.
+  EXPERIMENTAL: Configure a static address in the settings below. Prefer
+  reserving an address in the router where possible so it cannot conflict with
+  another device on the network.
 */
 #define WIFI_STATIC_IP      false
 
@@ -45,13 +64,13 @@
 /* |     |__/                                               | */
 /* '--------------------------------------------------------' */
 /*
-  These are important to maintain normal system behaviour. Only change if you know 
-  what your doing.
+  These values describe the protocol and physical display. They normally stay
+  unchanged unless the connected unit firmware or hardware changes.
 */
-#define ANSWER_SIZE         1       //Size of unit's request answer
-#define FLAP_AMOUNT         45      //Amount of Flaps in each unit
-#define MIN_SPEED           1       //Min Speed
-#define MAX_SPEED           12      //Max Speed
+#define ANSWER_SIZE         1       //Number of bytes returned by a unit status request.
+#define FLAP_AMOUNT         45      //Number of positions in each unit's alphabet.
+#define MIN_SPEED           1       //Slowest speed accepted by a unit.
+#define MAX_SPEED           12      //Fastest speed accepted by a unit.
 
 /* .-----------------------------------. */
 /* | _    _ _                 _        | */
@@ -60,18 +79,18 @@
 /* ||____|_|_.__|_| \__,_|_| |_\___/__/| */
 /* '-----------------------------------' */
 /*
-  External library dependencies, not much more to say!
+  External library dependencies used by the ESP8266 master.
 */
 
-//WiFi Setup Library if we use that mode
-//Specifically put here in this order to avoid conflict with other libraries
+//WiFiManager is only needed when the device provides its own setup portal.
+//Keep this include before the async web server headers to avoid library conflicts.
 #if WIFI_USE_DIRECT == false
 //Needed in order to be compatible with WiFiManager: https://github.com/me-no-dev/ESPAsyncWebServer/issues/418#issuecomment-667976368
 #define WEBSERVER_H
 #include <WiFiManager.h>
 #endif
 
-//OTA Libary if we are into that kind of thing
+//ArduinoOTA is optional so installations that do not need OTA can omit it.
 #if OTA_ENABLE == true
 #include <ArduinoOTA.h>
 #endif
@@ -96,49 +115,49 @@
 /* |                    |___/                                                  |___/    | */
 /* '------------------------------------------------------------------------------------' */
 /*
-  Settings you can feel free to change to customise how your display works.
+  User-configurable settings. These values can be changed without altering the
+  display logic below.
 */
-//Used if connecting via "WIFI_USE_DIRECT" of "true" - Otherwise, leave blank
+//Used when WIFI_USE_DIRECT is true. Leave blank when using WiFiManager.
 const char* wifiDirectSsid = "";
 const char* wifiDirectPassword = "";
 
-//Change if you want to have an Over The Air (OTA) Password for updates
+//Optional password required by OTA uploads. Leave blank to disable OTA authentication.
 const char* otaPassword = "";
 
-//Change this to your timezone, use the TZ database name
+//TZ database name used when converting synchronized UTC time for the display.
 //https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 const char* timezoneString = "Europe/London";
-// timezonePosix: Defines time zone rules in POSIX format. Empty here, so no custom rules are applied.
-// Example for Central European Time: const char* timezonePosix = "CET-1CEST,M3.5.0,M10.5.0/3";
+//Optional POSIX rules for a custom timezone. Leave empty when timezoneString is sufficient.
+//Example for Central European Time: const char* timezonePosix = "CET-1CEST,M3.5.0,M10.5.0/3";
 const char* timezonePosix = "";
 
-// timezoneServer: Specifies the NTP server for time sync. Empty here, so it defaults to "pool.ntp.org".
-// Example: const char* timezoneServer = "pool.ntp.org";
+//Optional NTP server for time synchronization. Empty uses the library default.
+//Example: const char* timezoneServer = "pool.ntp.org";
 const char* timezoneServer = "";
 
 
-//If you want to have a different date or clock format change these two
+//ezTime format strings used by date and clock display modes.
 //Complete table with every char: https://github.com/ropg/ezTime#getting-date-and-time
 const char* dateFormat = "d.m.Y"; //Examples: d.m.Y -> 11.09.2021, D M y -> SAT SEP 21
 const char* clockFormat = "H:i"; //Examples: H:i -> 21:19, h:ia -> 09:19PM
 
-//How long to show a message for when a scheduled message is shown for
+//Duration for scheduled messages that are not marked "Show Indefinitely".
 const int scheduledMessageDisplayTimeMillis = 7500;
 
-//Name to broadcast when USE_MULTICAST is enabled. Default is split-flap.local. Be mindful to choose something
-//unique to your local network. if running more than one display you'll need a unique name for each. 
+//mDNS name advertised when USE_MULTICAST is enabled. Use a unique name for
+//each display on the same network.
 const char* mdnsName = "split-flap";
 
 #if WIFI_STATIC_IP == true
-//Static IP address for your device. Try take care to not conflict with something else on your network otherwise
-//it is likely to not work
+//Static address for the ESP8266. It must be outside any conflicting allocation.
 IPAddress wifiDeviceStaticIp(192, 168, 1, 100);
 
-//Your router details
+//Router network settings used with the static address.
 IPAddress wifiRouterGateway(192, 168, 1, 1);
 IPAddress wifiSubnet(255, 255, 0, 0);
 
-//DNS Entry. Default: Google DNS
+//DNS server used by the ESP8266.
 IPAddress wifiPrimaryDns(8, 8, 8, 8);
 #endif
 
@@ -150,18 +169,18 @@ IPAddress wifiPrimaryDns(8, 8, 8, 8);
 /* |     |__/                                          |___/    | */
 /* '------------------------------------------------------------' */
 /*
-  Used for normal running of the system so changing things here might make things 
-  behave a little strange.
+  Runtime constants and state. These values are shared by the service files,
+  so changing them can affect the web API, persistence format, or unit protocol.
 */
-//The current version of code to display on the UI
+//Version reported by the web UI and /settings endpoint.
 const char* espVersion = "2.2.0";
 
-//All the letters on the units that we have to be displayed. You can change these if it so pleases at your own risk
+//Flap alphabet in physical order. The array index is sent to each unit.
 const char letters[] = {' ', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '$', '&', '#', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', '.', '-', '?', '!'};
 int displayState[UNITS_AMOUNT];
 unsigned long previousMillis = 0;
 
-//Search for parameter in HTTP POST request
+//HTTP form/query parameter names used by the web UI.
 const char* PARAM_ALIGNMENT = "alignment";
 const char* PARAM_FLAP_SPEED = "flapSpeed";
 const char* PARAM_DEVICEMODE = "deviceMode";
@@ -172,25 +191,25 @@ const char* PARAM_SCHEDULE_SHOW_INDEFINITELY = "scheduleShowIndefinitely";
 const char* PARAM_COUNTDOWN_DATE = "countdownDateTimeUnix";
 const char* PARAM_ID = "id";
 
-//Device Modes
+//Values accepted by the deviceMode form field and persisted setting.
 const char* DEVICE_MODE_TEXT = "text";
 const char* DEVICE_MODE_CLOCK = "clock";
 const char* DEVICE_MODE_DATE = "date";
 const char* DEVICE_MODE_COUNTDOWN = "countdown";
 
-//Alignment options
+//Values accepted by the alignment form field and persisted setting.
 const char* ALIGNMENT_MODE_LEFT = "left";
 const char* ALIGNMENT_MODE_CENTER = "center";
 const char* ALIGNMENT_MODE_RIGHT = "right";
 
-//File paths to save input values permanently
+//LittleFS paths for settings and the scheduled-message queue.
 const char* alignmentPath = "/alignment.txt";
 const char* flapSpeedPath = "/flapspeed.txt";
 const char* deviceModePath = "/devicemode.txt";
 const char* countdownPath = "/countdown.txt";
 const char* scheduledMessagesPath = "/scheduled-messages.txt";
 
-//Variables for storing things for checking and use in normal running
+//Runtime settings loaded from LittleFS or received from the web UI.
 String alignment = "";
 String flapSpeed = "";
 String inputText = "";
@@ -205,16 +224,16 @@ bool isWifiConfigured = false;
 LList<ScheduledMessage> scheduledMessages;
 Timezone timezone; 
 
-//Create AsyncWebServer object on port 80
+//The web UI and JSON endpoints are served over the default HTTP port.
 AsyncWebServer webServer(80);
 
-//Used for creating a Access Point to allow WiFi setup
+//WiFiManager state is only needed in AP/provisioning mode.
 #if WIFI_USE_DIRECT == false
 WiFiManager wifiManager;
 bool isPendingWifiReset = false;
 #endif
 
-//Used to denote that the system has gone into OTA mode
+//OTA handlers are initialized lazily when /ota is requested.
 #if OTA_ENABLE == true
 bool isInOtaMode = false;
 #endif
@@ -226,30 +245,37 @@ bool isInOtaMode = false;
 /* ||___/\___|\_/|_\__\___| |___\___|\__|\_,_| .__/| */
 /* |                                         |_|   | */
 /* '-----------------------------------------------' */
+/**
+ * Initializes hardware, networking, time, persistence, and HTTP routes.
+ *
+ * The web server is only started after Wi-Fi is configured and the persisted
+ * settings have been loaded. Requests that require a reboot set a flag and
+ * are acted on from loop(), allowing the current HTTP response to finish.
+ */
 void setup() {
 #if SERIAL_ENABLE == true
-  //Setup so we can see serial messages
+  //Serial diagnostics and I2C cannot share the ESP-01 pins in this build.
   Serial.begin(SERIAL_BAUDRATE);
 #else
-  //For ESP01 only
+  //ESP-01 I2C pins: SDA=GPIO1 and SCL=GPIO3.
   Wire.begin(1, 3); 
   
-  //De-activate I2C if debugging the ESP, otherwise serial does not work
-  //Wire.begin(D1, D2); //For NodeMCU testing only SDA=D1 and SCL=D2
+  //For NodeMCU testing, use the board's exposed pins instead:
+  //Wire.begin(D1, D2); //SDA=D1, SCL=D2
 #endif
   SerialPrintln("");
   SerialPrintln("#######################################################");
   SerialPrintln("..............Split Flap Display Starting..............");
   SerialPrintln("#######################################################");
 
-  //Load and read all the things
+  //Connect before initializing services that need network time or HTTP access.
   initWiFi();
   
   //Helpful if want to force reset WiFi settings for testing
   //wifiManager.resetSettings();
 
   if (isWifiConfigured && !isPendingReboot) {
-    //ezTime initialization
+    //Initialize ezTime only after Wi-Fi is available.
 
     if (strlen(timezoneServer) > 0) {  // Check if timezoneServer is not empty
       setServer(timezoneServer);
@@ -270,7 +296,7 @@ void setup() {
     SerialPrintln("Current time: ");
     SerialPrintln(timezone.dateTime());
     
-    //Load various variables
+    //Mount persistence and restore settings before registering routes.
     initialiseFileSystem();
     loadValuesFromFileSystem();
 
@@ -286,7 +312,7 @@ void setup() {
     }
 #endif
 
-    //Web Server Endpoint configuration
+    //Serve the static web UI and register its JSON/control endpoints.
     webServer.serveStatic("/", LittleFS, "/");
     webServer.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
       SerialPrintln("Request Home Page Received");
@@ -310,7 +336,7 @@ void setup() {
     webServer.on("/reboot", HTTP_GET, [](AsyncWebServerRequest * request) {
       SerialPrintln("Request to Reboot Received");
       
-      //Create HTML page to explain the system is rebooting
+      //Finish the response before loop() performs the restart.
       IPAddress ip = WiFi.localIP();
       
       String html = "<div style='text-align:center'>";
@@ -329,7 +355,7 @@ void setup() {
     webServer.on("/reset-units", HTTP_GET, [](AsyncWebServerRequest * request) {
       SerialPrintln("Request to Reset Units Received");
       
-      //This will be picked up in the loop
+      //The I2C reset sequence runs from loop(), outside the request handler.
       isPendingUnitsReset = true;
       
       request->redirect("/?is-resetting-units=true");
@@ -518,7 +544,7 @@ void setup() {
     webServer.on("/ota", HTTP_GET, [](AsyncWebServerRequest * request) {
       SerialPrintln("Request to start OTA mode received");
       
-      //Create HTML page to explain OTA
+      //Finish the response before OTA callbacks take over the device.
       IPAddress ip = WiFi.localIP();
       
       String html = "<div style='text-align:center'>";
@@ -538,7 +564,7 @@ void setup() {
         SerialPrintln("Setting OTA Hostname");
         ArduinoOTA.setHostname("Split-Flap-OTA");
 
-        //If there is a password set, disabled by default for ease
+        //Authentication is optional and disabled by default for ease of setup.
         if (otaPassword != "") {
           ArduinoOTA.setPassword(otaPassword);
         }
@@ -586,7 +612,7 @@ void setup() {
           }
         });
         
-        //Put in OTA Mode
+        //loop() calls ArduinoOTA.handle() while this flag is set.
         isInOtaMode = true;
       }
       else {
@@ -615,6 +641,7 @@ void setup() {
     });
 #endif   
 
+    //Give the async server a moment to finish initialization before accepting requests.
     delay(250);
     webServer.begin();
 
@@ -641,8 +668,16 @@ void setup() {
 /* ||_|_\\_,_|_||_|_||_|_|_||_\__, | |____\___\___| .__/| */
 /* |                          |___/               |_|   | */
 /* '----------------------------------------------------' */
+/**
+ * Runs deferred control actions and refreshes the active display mode.
+ *
+ * Reboots and Wi-Fi resets have priority because continuing normal display
+ * work after either request could leave the device in a partially configured
+ * state. Normal display calculations run once per second; OTA and ezTime
+ * service work continues between those ticks.
+ */
 void loop() {
-  //Reboot in here as if we restart within a request handler, no response is returned
+  //Restart from loop() so the HTTP response can be returned to the caller.
   if (isPendingReboot) {
     SerialPrintln("Rebooting Now... Fairwell!");
     SerialPrintln("#######################################################");
@@ -653,7 +688,7 @@ void loop() {
   }
 
 #if WIFI_USE_DIRECT == false
-  //Clear off the WiFi Manager Settings
+  //Erase WiFiManager settings from loop(), then reboot into setup mode.
   if (isPendingWifiReset) {
     SerialPrintln("Removing WiFi settings");
     wifiManager.resetSettings();
@@ -668,7 +703,7 @@ void loop() {
   MDNS.update();
 #endif
 
-  //Do nothing if WiFi is not configured
+  //Without Wi-Fi there is no clock or web service, so show a clear local status.
   if (!isWifiConfigured) {
     //Show there is an error via text on display
     deviceMode = DEVICE_MODE_TEXT;
@@ -683,7 +718,7 @@ void loop() {
   if (isPendingUnitsReset) {
     SerialPrintln("Reseting Units now...");
 
-    //Blank out the message
+    //A full sweep of '-' and '.' causes each unit to re-home/recalibrate.
     String blankOutText1 = createRepeatingString('-');
     showText(blankOutText1);
     delay(2000);
@@ -699,17 +734,17 @@ void loop() {
   }
   
 #if OTA_ENABLE == true
-  //If System is in OTA, try handle!
+  //Service OTA traffic while the device is in update mode.
   if(isInOtaMode) {
     ArduinoOTA.handle();
     delay(1);
   }
 #endif
 
-  //ezTime library sync
+  //Allow ezTime to process NTP synchronization and time events.
   events(); 
   
-  //Process every second
+  //Process display state at a human-readable one-second cadence.
   unsigned long currentMillis = millis();
   if (currentMillis - previousMillis >= 1000) {
     previousMillis = currentMillis;
@@ -717,7 +752,7 @@ void loop() {
     checkScheduledMessages();
     checkCountdown();
 
-    //Mode Selection
+    //Select the text source for the currently active device mode.
     if (deviceMode == DEVICE_MODE_TEXT || deviceMode == DEVICE_MODE_COUNTDOWN) { 
       showText(inputText);
     } 
@@ -730,7 +765,12 @@ void loop() {
   }
 }
 
-//Gets all the currently stored calues from memory in a JSON object
+/**
+ * Serializes the current runtime settings and scheduled messages for /settings.
+ *
+ * The response is generated from memory rather than re-reading LittleFS so it
+ * also reflects transient values such as the last message and OTA state.
+ */
 String getCurrentSettingValues() {
   JsonDocument document;
 
